@@ -1,0 +1,15 @@
+venv/
+env/
+ENV/
+
+
+db.sqlite3
+media/
+
+.env
+# IDE
+.vscode/
+
+
+# Логи
+logs/
