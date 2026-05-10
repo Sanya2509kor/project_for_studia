@@ -24,8 +24,23 @@
 
                     <form method="post" id="appointmentForm" class="appointment-form">
                         {% csrf_token %}
-                        
                         <!-- Основная информация -->
+
+                        <div class="form-group mb-4">
+                            <label for="id_product" class="form-label">
+                                <i class="fas fa-concierge-bell me-2"></i>Услуга
+                            </label>
+                            <div class="input-wrapper">
+                                {{ form.product }}
+                                <i class="fas fa-spa input-icon"></i>
+                            </div>
+                            {% if form.product.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.product.errors }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
                         <div class="form-group mb-4">
                             <label for="id_date" class="form-label">
                                 <i class="fas fa-calendar-alt me-2"></i>Дата
@@ -52,21 +67,6 @@
                             {% if form.time.errors %}
                                 <div class="invalid-feedback d-block">
                                     {{ form.time.errors }}
-                                </div>
-                            {% endif %}
-                        </div>
-                        
-                        <div class="form-group mb-4">
-                            <label for="id_product" class="form-label">
-                                <i class="fas fa-concierge-bell me-2"></i>Услуга
-                            </label>
-                            <div class="input-wrapper">
-                                {{ form.product }}
-                                <i class="fas fa-spa input-icon"></i>
-                            </div>
-                            {% if form.product.errors %}
-                                <div class="invalid-feedback d-block">
-                                    {{ form.product.errors }}
                                 </div>
                             {% endif %}
                         </div>
@@ -182,77 +182,102 @@
 <script src="{% static 'deps/js/jquery/jquery-3.7.0.min.js' %}"></script>
 <script>
 $(document).ready(function() {
-    // AJAX загрузка времени при изменении даты
-    $("#id_date").on('change', function() {
-        const selectedDate = $(this).val();
+    // При изменении услуги - обновляем список дат
+    // При изменении услуги - обновляем список дат
+    $("#id_product").on('change', function() {
+        const productId = $(this).val();
+        const dateSelect = $("#id_date");
+        const timeSelect = $("#id_time");
         
-        if (selectedDate) {
+        console.log("Product changed to:", productId);
+        
+        if (productId) {
+            dateSelect.html('<option value="">Загрузка дат...</option>');
+            timeSelect.html('<option value="">Сначала выберите дату</option>');
+            
+            $.ajax({
+                url: "{% url 'order:ajax_load_dates' %}",
+                type: "GET",
+                data: { 'product': productId },
+                success: function(response) {
+                    console.log("Dates response:", response);
+                    
+                    if (response.dates && response.dates.length > 0) {
+                        let options = '<option value="">Выберите дату</option>';
+                        response.dates.forEach(function(date) {
+                            options += `<option value="${date.id}">${date.date} (${date.times_count} слотов)</option>`;
+                        });
+                        dateSelect.html(options);
+                    } else {
+                        dateSelect.html('<option value="">Нет доступных дат для этой услуги</option>');
+                        if (response.error) {
+                            console.error("Server error:", response.error);
+                        }
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error("Error loading dates:", error);
+                    console.error("Status:", status);
+                    console.error("Response:", xhr.responseText);
+                    dateSelect.html('<option value="">Ошибка загрузки дат</option>');
+                }
+            });
+        } else {
+            dateSelect.html('<option value="">Сначала выберите услугу</option>');
+            timeSelect.html('<option value="">---</option>');
+        }
+    });
+    
+    // При изменении даты - загружаем время
+    $("#id_date").on('change', function() {
+        const dateId = $(this).val();
+        const productId = $("#id_product").val();
+        const timeSelect = $("#id_time");
+        
+        if (dateId && productId) {
+            timeSelect.html('<option value="">Загрузка...</option>');
+            
             $.ajax({
                 url: "{% url 'order:ajax_load_times' %}",
                 type: "GET",
-                data: { 'date': selectedDate },
-                beforeSend: function() {
-                    $("#id_time").html('<option value="">Загрузка...</option>');
+                data: { 
+                    'date': dateId,
+                    'product': productId
                 },
                 success: function(data) {
-                    $("#id_time").html(data);
-                    $("#id_time").addClass('fade-in');
-                    setTimeout(function() {
-                        $("#id_time").removeClass('fade-in');
-                    }, 300);
+                    timeSelect.html(data);
+                    if ($('option', timeSelect).length <= 1) {
+                        timeSelect.html('<option value="">Нет свободного времени</option>');
+                    }
                 },
                 error: function() {
-                    $("#id_time").html('<option value="">Ошибка загрузки</option>');
+                    timeSelect.html('<option value="">Ошибка загрузки</option>');
                 }
             });
         }
     });
-
+    
+    // Если услуга уже выбрана из URL
+    const initialProduct = $("#id_product").val();
+    if (initialProduct) {
+        $("#id_product").trigger('change');
+    }
+    
     // Маска для телефона
     $('#id_phone').on('input', function(e) {
         let value = e.target.value.replace(/[^\d+]/g, '');
-        
         if (!value.startsWith('+7') && !value.startsWith('7') && !value.startsWith('8')) {
             value = '+7';
         }
-        
-        let formatted = value
-            .replace(/^(\+?7|8)(\d{0,3})(\d{0,3})(\d{0,2})(\d{0,2})/, function(match, p1, p2, p3, p4, p5) {
-                let result = '+7';
-                if (p2) result += p2;
-                if (p3) result += p3;
-                if (p4) result += p4;
-                if (p5) result += p5;
-                return result;
-            });
-        
-        e.target.value = formatted;
-    });
-
-    // Валидация формы
-    $("#appointmentForm").on('submit', function(e) {
-        let isValid = true;
-        
-        $('.input-wrapper input[required], .input-wrapper select[required]').each(function() {
-            if (!$(this).val()) {
-                $(this).addClass('is-invalid');
-                isValid = false;
-            } else {
-                $(this).removeClass('is-invalid');
-            }
+        let formatted = value.replace(/^(\+?7|8)(\d{0,3})(\d{0,3})(\d{0,2})(\d{0,2})/, function(match, p1, p2, p3, p4, p5) {
+            let result = '+7';
+            if (p2) result += p2;
+            if (p3) result += p3;
+            if (p4) result += p4;
+            if (p5) result += p5;
+            return result;
         });
-        
-        if (!isValid) {
-            e.preventDefault();
-            $('html, body').animate({
-                scrollTop: $('.is-invalid').first().offset().top - 100
-            }, 500);
-            
-            $('.is-invalid').first().addClass('shake');
-            setTimeout(function() {
-                $('.is-invalid').removeClass('shake');
-            }, 500);
-        }
+        e.target.value = formatted;
     });
 });
 </script>

@@ -191,8 +191,8 @@ SITE_URL = config('SITE_URL', default='https://hair-braider.ru')
 # ==================== БЕЗОПАСНОСТЬ ====================
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
 
-CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='https://hair-braider.ru/', cast=Csv())
-CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='https://hair-braider.ru/,http://localhost:8000', cast=Csv())
+# CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='https://hair-braider.ru/', cast=Csv())
+# CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='https://hair-braider.ru/,http://localhost:8000', cast=Csv())
 
 # Настройки сессий - только для продакшена
 if not DEBUG:

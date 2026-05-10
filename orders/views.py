@@ -1,10 +1,10 @@
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse_lazy
 from django.core.cache import cache
-from main.models import Color
+from main.models import Color, Product
 from .forms import AppointmentForm
-from .models import AvailableTime, Appointment
+from .models import AvailableDate, AvailableTime, Appointment
 from django.contrib.auth.mixins import UserPassesTestMixin, LoginRequiredMixin
 from django.views.generic import CreateView, ListView
 from django.db import transaction
@@ -70,14 +70,17 @@ class AppointmentView(LoginRequiredMixin, CreateView):
     def form_valid(self, form):
         try:
             time_slot = form.cleaned_data['time']
+            product = form.cleaned_data['product']
             
-            # Блокировка записи
+            # Блокировка для предотвращения гонок
             locked_time_slot = AvailableTime.objects.select_for_update().get(pk=time_slot.pk)
             
-            if not locked_time_slot.freely:
-                form.add_error('time', 'Это время уже занято')
+            # Проверяем, доступно ли время для этой услуги
+            if not locked_time_slot.is_available_for_product(product):
+                form.add_error('time', 'Это время уже занято для выбранной услуги или недоступно')
                 return self.form_invalid(form)
             
+            # Создаем запись (без изменения freely, так как этого поля нет)
             self.object = form.save(commit=False)
             self.object.time = locked_time_slot
             
@@ -86,10 +89,6 @@ class AppointmentView(LoginRequiredMixin, CreateView):
             
             self.object.save()
             form.save_m2m()
-            
-            # Обновление статуса времени
-            locked_time_slot.freely = False
-            locked_time_slot.save()
             
             # Инвалидация кэша
             cache.delete('available_dates')
@@ -109,7 +108,7 @@ class AppointmentView(LoginRequiredMixin, CreateView):
             form.add_error('time', 'Выбранное время не найдено')
             return self.form_invalid(form)
         except Exception as e:
-            form.add_error(None, f'Произошла ошибка')
+            form.add_error(None, f'Произошла ошибка: {str(e)}')
             return self.form_invalid(form)
 
     def form_invalid(self, form):
@@ -123,23 +122,88 @@ class AppointmentView(LoginRequiredMixin, CreateView):
 
 
 @vary_on_headers('X-Requested-With')
-@cache_page(60 * 15)  # Кэширование на 15 минут
+@cache_page(60 * 5)  # Кэш на 5 минут
 def load_times(request):
     """AJAX загрузка доступных временных слотов"""
     date_id = request.GET.get('date')
+    product_id = request.GET.get('product')
+        
     if not date_id:
-        return JsonResponse({'error': 'Date ID required'}, status=400)
+        return HttpResponse('<option value="">Не указана дата</option>')
     
-    times = AvailableTime.objects.filter(
-        date_id=date_id, 
-        freely=True
-    ).order_by('time').values('id', 'time')
+    if not product_id:
+        return HttpResponse('<option value="">Сначала выберите услугу</option>')
     
-    return render(
-        request, 
-        'orders/times_dropdown_list_options.html', 
-        {'times': times}
-    )
+    try:
+        date_obj = AvailableDate.objects.get(id=date_id)
+        product = Product.objects.get(id=product_id)
+        
+        # Получаем все слоты для этой даты
+        all_times = AvailableTime.objects.filter(date_id=date_id).order_by('time')
+        
+        # Фильтруем доступные слоты
+        available_times = []
+        for time_slot in all_times:
+            if time_slot.is_available_for_product(product):
+                available_times.append(time_slot)
+        
+        # Формируем HTML
+        if available_times:
+            html = '<option value="">---------</option>'
+            for time_slot in available_times:
+                html += f'<option value="{time_slot.id}">{time_slot.time.strftime("%H:%M")}</option>'
+        else:
+            html = '<option value="">Нет свободного времени</option>'
+        
+        return HttpResponse(html)
+        
+    except AvailableDate.DoesNotExist:
+        return HttpResponse('<option value="">Дата не найдена</option>')
+    except Product.DoesNotExist:
+        return HttpResponse('<option value="">Услуга не найдена</option>')
+    except Exception as e:
+        return HttpResponse(f'<option value="">Ошибка: {str(e)[:50]}</option>')
+
+
+def load_dates(request):
+    """AJAX загрузка доступных дат после выбора услуги"""
+    product_id = request.GET.get('product')
+    
+    if not product_id:
+        return JsonResponse({'dates': []})
+    
+    try:
+        product = Product.objects.get(id=product_id)
+        current_date = timezone.localtime(timezone.now()).date()
+                
+        # Получаем ВСЕ даты, начиная с сегодняшней
+        all_dates = AvailableDate.objects.filter(
+            date__gte=current_date
+        ).order_by('date')
+                
+        available_dates = []
+        for date_obj in all_dates:            
+            # Проверяем доступность даты для этой услуги
+            if date_obj.is_available_for_product(product):
+                # Дополнительно проверяем, есть ли свободное время
+                available_times = []
+                for time_slot in date_obj.available_times.all().order_by('time'):
+                    if time_slot.is_available_for_product(product):
+                        available_times.append(time_slot)
+                
+                if available_times:
+                    available_dates.append({
+                        'id': date_obj.id,
+                        'date': date_obj.date.strftime('%d.%m.%Y'),
+                        'date_iso': date_obj.date.isoformat(),
+                        'times_count': len(available_times)
+                    })
+        return JsonResponse({'dates': available_dates})
+        
+    except Product.DoesNotExist:
+        return JsonResponse({'dates': []})
+    except Exception as e:
+        return JsonResponse({'dates': [], 'error': str(e)})
 
 
 class ListOrdersView(UserPassesTestMixin, ListView):
