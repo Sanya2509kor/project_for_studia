@@ -235,7 +235,7 @@ class UserProfileView(LoginRequiredMixin, UpdateView):
             context['today'] = today  # Добавьте today в контекст
             context['current_app'] = user_app.filter(date__date=today).order_by('-date', 'time')[:5]
             context['past_app'] = user_app.filter(date__date__lt=today).order_by('-date', 'time')[:5]
-            context['future_app'] = user_app.filter(date__date__gt=today).order_by('-date', 'time')[:5]
+            context['future_app'] = user_app.filter(date__date__gt=today).order_by('date', 'time')[:5]
         return context
     
     def get_queryset(self):
